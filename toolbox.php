@@ -2,8 +2,17 @@
 
 declare(strict_types=1);
 
+session_start();
+if (!isset($_SESSION['history'])) {
+  $_SESSION['history'] = [];
+}
+
 // Read which tool form was submitted (defaults to empty string on initial GET request)
 $tool = $_POST['tool'] ?? '';
+if ($tool !== '') {
+  array_unshift($_SESSION['history'], strtoupper($tool) . ' executed at ' . date('H:i:s'));
+  $_SESSION['history'] = array_slice($_SESSION['history'], 0, 5);
+}
 $out  = [];
 
 // --- TOOL 1: CRYPTOGRAPHIC HASH, BCRYPT & TOKEN GENERATOR ---
@@ -32,6 +41,105 @@ if ($tool === 'json') {
     ? json_encode(json_decode($raw), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES)
     : 'Correct the JSON syntax errors above to format this payload.';
 }
+
+// --- TOOL 3: BASE64 & URL CODEC (Paste in top PHP block) ---
+if ($tool === 'codec') {
+  $s = $_POST['str'] ?? '';
+  $out['b64_enc'] = base64_encode($s);
+  $decoded = base64_decode($s, strict: true);
+  $out['b64_dec'] = ($decoded !== false && mb_check_encoding($decoded, 'UTF-8'))
+    ? $decoded
+    : '(Input is not valid UTF-8 Base64)';
+  $out['url_enc'] = rawurlencode($s);
+}
+
+// --- TOOL 4: NATURAL-LANGUAGE DATE & UNIX EPOCH CONVERTER (Paste in top PHP block) ---
+if ($tool === 'date') {
+  $expr = trim($_POST['expr'] ?? 'now');
+  // If input is purely numeric, treat it as a Unix epoch timestamp; otherwise parse English text
+  $ts = is_numeric($expr) ? (int) $expr : strtotime($expr);
+  if ($ts !== false) {
+    $out['unix']  = (string) $ts;
+    $out['human'] = date('l, jS F Y H:i:s T', $ts);
+    $out['iso']   = date('c', $ts);
+  } else {
+    $out['error'] = 'Could not parse date expression.';
+  }
+}
+
+// --- TOOL 5: SAFE DNS & IP INSPECTOR (Paste in top PHP block) ---
+if ($tool === 'net') {
+  // Sanitize hostname to allow only valid DNS characters
+  $host = preg_replace('/[^a-zA-Z0-9.-]/', '', $_POST['host'] ?? '');
+  $ip   = gethostbyname($host);
+
+  // Validate that the resolved IPv4 address is strictly public
+  $safe = filter_var(
+    $ip,
+    FILTER_VALIDATE_IP,
+    FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE
+  );
+
+  if ($safe !== false) {
+    $rdns = gethostbyaddr($safe);
+    $out['res'] = "Host: $host\nIPv4: $safe\nrDNS: $rdns";
+  } else {
+    $out['res'] = "Blocked: Private, loopback, reserved, or unresolvable address ($ip).";
+  }
+}
+
+// --- TOOL 6: MULTIBYTE TEXT ANALYZER & SLUGIFIER (Paste in top PHP block) ---
+if ($tool === 'text') {
+  $txt = $_POST['body'] ?? '';
+  $out['words'] = str_word_count($txt);
+  $out['bytes'] = strlen($txt);
+  $out['chars'] = mb_strlen($txt, 'UTF-8');
+  $out['slug']  = trim(preg_replace('/[^a-z0-9]+/', '-', strtolower($txt)), '-');
+}
+
+// ---- TOOL 7: Fuzzy Keyword Spellchecker
+if ($tool === 'spell') {
+  $term = strtolower(trim($_POST['term'] ?? ''));
+  $dictionary = [
+    'authentication',
+    'authorization',
+    'bytecode',
+    'cookie',
+    'cryptography',
+    'database',
+    'decorator',
+    'equirectangular',
+    'framework',
+    'gateway',
+    'idempotent',
+    'middleware',
+    'opcache',
+    'parameterized',
+    'sqlite',
+    'webhook'
+  ];
+
+  $shortest = -1;
+  $closest  = '';
+
+  foreach ($dictionary as $word) {
+    $dist = levenshtein($term, $word);
+    if ($dist === 0) {
+      $closest  = $word;
+      $shortest = 0;
+      break; // Exact match found
+    }
+    if ($shortest < 0 || $dist < $shortest) {
+      $closest  = $word;
+      $shortest = $dist;
+    }
+  }
+
+  $out['spell_result'] = ($shortest === 0)
+    ? "Exact match: '$closest'"
+    : "Did you mean '$closest'? (Edit distance: $shortest)";
+}
+
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -167,6 +275,19 @@ if ($tool === 'json') {
     <span class="badge">PHP <?= PHP_VERSION ?> | Host: <?= htmlspecialchars($_SERVER['SERVER_NAME'] ?? 'doc.gold.ac.uk', ENT_QUOTES, 'UTF-8') ?> | RAM: <?= round(memory_get_peak_usage(true) / 1024) ?> KB</span>
   </header>
 
+  <div class="card" style="margin-bottom: 20px;">
+    <form method="POST">
+      <input type="hidden" name="tool" value="clear_history">
+      <button type="submit">Clear History</button>
+    </form>
+    <?php if ($tool === 'clear_history'): ?>
+      <?php $_SESSION['history'] = []; ?>
+    <?php endif; ?>
+    <?php foreach ($_SESSION['history'] as $item): ?>
+      <div><?= htmlspecialchars($item, ENT_QUOTES, 'UTF-8') ?></div>
+    <?php endforeach; ?>
+  </div>
+
   <div class="grid">
 
     <!-- CARD 1: HASH, BCRYPT & TOKEN GENERATOR -->
@@ -200,6 +321,81 @@ Token:   <?= htmlspecialchars($out['token'], ENT_QUOTES, 'UTF-8') ?></pre>
         <pre>Status: <?= htmlspecialchars($out['status'], ENT_QUOTES, 'UTF-8') ?>
 
 <?= htmlspecialchars($out['pretty'], ENT_QUOTES, 'UTF-8') ?></pre>
+      <?php endif; ?>
+    </div>
+
+    <!-- CARD 3: BASE64 & URL CODEC (Paste inside <div class="grid">) -->
+    <div class="card">
+      <h2>3. Base64 &amp; URL Codec</h2>
+      <p class="desc">Encodes and strictly decodes Base64 payloads and RFC 3986 URL strings.</p>
+      <form method="POST">
+        <input type="hidden" name="tool" value="codec">
+        <input type="text" name="str" placeholder="Enter text or Base64 payload..." value="<?= htmlspecialchars($_POST['str'] ?? '', ENT_QUOTES, 'UTF-8') ?>" required>
+        <button type="submit" style="margin-top:8px;">Encode / Decode</button>
+      </form>
+      <?php if ($tool === 'codec'): ?>
+        <pre>Base64 Enc: <?= htmlspecialchars($out['b64_enc'], ENT_QUOTES, 'UTF-8') ?>
+
+Base64 Dec: <?= htmlspecialchars($out['b64_dec'], ENT_QUOTES, 'UTF-8') ?>
+
+URL Enc:    <?= htmlspecialchars($out['url_enc'], ENT_QUOTES, 'UTF-8') ?></pre>
+      <?php endif; ?>
+    </div>
+
+    <!-- CARD 4: DATE & UNIX EPOCH CONVERTER (Paste inside <div class="grid">) -->
+    <div class="card">
+      <h2>4. Date &amp; Unix Epoch Converter</h2>
+      <p class="desc">Converts relative English phrases or Unix timestamps into ISO-8601 dates.</p>
+      <form method="POST">
+        <input type="hidden" name="tool" value="date">
+        <input type="text" name="expr" placeholder="e.g. next Tuesday, +3 weeks, or 1794825600" value="<?= htmlspecialchars($_POST['expr'] ?? '', ENT_QUOTES, 'UTF-8') ?>" required>
+        <button type="submit" style="margin-top:8px;">Convert Timestamp</button>
+      </form>
+      <?php if ($tool === 'date'): ?>
+        <pre><?= isset($out['error'])
+                ? htmlspecialchars($out['error'], ENT_QUOTES, 'UTF-8')
+                : htmlspecialchars("Unix:  {$out['unix']}\nHuman: {$out['human']}\nISO:   {$out['iso']}", ENT_QUOTES, 'UTF-8') ?></pre>
+      <?php endif; ?>
+    </div>
+
+    <!-- CARD 5: SAFE DNS & IP INSPECTOR (Paste inside <div class="grid">) -->
+    <div class="card">
+      <h2>5. Safe DNS &amp; IP Inspector</h2>
+      <p class="desc">Resolves hostnames and blocks private/loopback ranges using <code>filter_var()</code>.</p>
+      <form method="POST">
+        <input type="hidden" name="tool" value="net">
+        <input type="text" name="host" placeholder="e.g. gold.ac.uk, 8.8.8.8, or 127.0.0.1" value="<?= htmlspecialchars($_POST['host'] ?? '', ENT_QUOTES, 'UTF-8') ?>" required>
+        <button type="submit" style="margin-top:8px;">Inspect Host</button>
+      </form>
+      <?php if ($tool === 'net'): ?>
+        <pre><?= htmlspecialchars($out['res'], ENT_QUOTES, 'UTF-8') ?></pre>
+      <?php endif; ?>
+    </div>
+    <!-- CARD 6: TEXT ANALYZER & SLUGIFIER (Paste inside <div class="grid">) -->
+    <div class="card">
+      <h2>6. Text Analyzer &amp; URL Slugifier</h2>
+      <p class="desc">Compares byte length vs UTF-8 character count and generates clean URL slugs.</p>
+      <form method="POST">
+        <input type="hidden" name="tool" value="text">
+        <textarea name="body" rows="3" placeholder="e.g. Café Price: £4.50 — Special Offer!" required><?= htmlspecialchars($_POST['body'] ?? '', ENT_QUOTES, 'UTF-8') ?></textarea>
+        <button type="submit" style="margin-top:8px;">Analyze Text</button>
+      </form>
+      <?php if ($tool === 'text'): ?>
+        <pre>Words: <?= $out['words'] ?> | UTF-8 Chars: <?= $out['chars'] ?> | Raw Bytes: <?= $out['bytes'] ?>
+
+Slug:  <?= htmlspecialchars($out['slug'], ENT_QUOTES, 'UTF-8') ?></pre>
+      <?php endif; ?>
+    </div>
+    <!-- CARD 7 -->
+    <div class="card">
+      <h2>7. Fuzzy Keyword Spellchecker</h2>
+      <form method="POST">
+        <input type="hidden" name="tool" value="spell">
+        <input type="text" name="term">
+        <button type="submit" style="margin-top:8px;">Check Spelling</button>
+      </form>
+      <?php if ($tool === 'spell'): ?>
+        <pre><?= htmlspecialchars($out['spell_result'], ENT_QUOTES, 'UTF-8') ?></pre>
       <?php endif; ?>
     </div>
 
