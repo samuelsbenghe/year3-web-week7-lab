@@ -140,6 +140,18 @@ if ($tool === 'spell') {
     : "Did you mean '$closest'? (Edit distance: $shortest)";
 }
 
+// --- TOOL 8: Filehash
+if ($tool === 'filehash' && isset($_FILES['upload'])) {
+  if ($_FILES['upload']['error'] === UPLOAD_ERR_OK) {
+    $tmp  = $_FILES['upload']['tmp_name'];
+    $name = basename($_FILES['upload']['name']);
+    $size = $_FILES['upload']['size'];
+    $sha  = hash_file('sha256', $tmp);
+    $out['file_info'] = "File: $name ($size bytes)\nSHA-256: $sha";
+  } else {
+    $out['file_info'] = "Upload error code: " . $_FILES['upload']['error'];
+  }
+}
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -398,8 +410,18 @@ Slug:  <?= htmlspecialchars($out['slug'], ENT_QUOTES, 'UTF-8') ?></pre>
         <pre><?= htmlspecialchars($out['spell_result'], ENT_QUOTES, 'UTF-8') ?></pre>
       <?php endif; ?>
     </div>
-
-  </div>
+    <!-- CARD 8 -->
+    <div class="card">
+      <h2>8. Multipart File SHA-256 Checksummer</h2>
+      <form method="POST" enctype="multipart/form-data">
+        <input type="hidden" name="tool" value="filehash">
+        <input type="file" name="upload">
+        <button type="submit" style="margin-top:8px;">Compute SHA-256</button>
+      </form>
+      <?php if ($tool === 'filehash'): ?>
+        <pre><?= htmlspecialchars($out['file_info'], ENT_QUOTES, 'UTF-8') ?></pre>
+      <?php endif; ?>
+    </div>
 </body>
 
 </html>
